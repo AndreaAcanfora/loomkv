@@ -84,7 +84,31 @@ Keys and values are binary-safe byte strings, like in Redis.
 
 ## Benchmarks
 
-BENCHMARKS_PLACEHOLDER
+`redis-benchmark` against loomkv and against **Redis 7.0.15 on the same machine** (a 4-vCPU GitHub Actions runner,
+Java 25.0.5, 50 clients, 200,000 requests per test). The [CI job](.github/workflows/ci.yml) reruns it on every
+change; these are the numbers from the first run, in requests per second:
+
+| Test | loomkv | Redis | | loomkv, pipeline 16 | Redis, pipeline 16 | |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| SET | 45,714 | 45,851 | 100% | 543,478 | 327,869 | 166% |
+| GET | 45,704 | 47,755 | 96% | 675,676 | 477,327 | 142% |
+| INCR | 47,148 | 47,159 | 100% | 542,005 | 573,066 | 95% |
+| LPUSH | 46,631 | 50,025 | 93% | 602,410 | 373,832 | 161% |
+| RPOP | 42,900 | 50,684 | 85% | 483,092 | 371,747 | 130% |
+| HSET | 47,676 | 43,039 | 111% | 557,103 | 302,572 | 184% |
+| SADD | 46,051 | 48,008 | 96% | 576,369 | 372,439 | 155% |
+| LRANGE (first 100) | 30,516 | 38,425 | 79% | 102,775 | 122,100 | 84% |
+| MSET (10 keys) | 46,992 | 54,392 | 86% | 366,300 | 415,800 | 88% |
+
+How to read this, honestly:
+
+- **Without pipelining both are bound by network round trips**, and loomkv is within about 15% of Redis.
+- **With pipelining loomkv often comes out ahead.** That is not because Java beats C: Redis 7 runs commands and,
+  by default, network I/O on a single core, while loomkv parses requests and writes replies on every core (one
+  virtual thread per client) and serializes only the in-memory work. Where that work is heavier, like building a
+  100-element `LRANGE` reply or ten `MSET` writes, Redis is faster.
+- It is one run on a shared CI machine, so expect noise of 10-20%. And Redis does far more: replication,
+  persistence options, memory management, dozens of data types. loomkv is a learning project, not a replacement.
 
 ## How it works
 
