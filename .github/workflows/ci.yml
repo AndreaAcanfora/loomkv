@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - run: mvn -B verify
+
+  compatibility:
+    name: redis-cli and redis-benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Install the official Redis tools and server (for comparison)
+        run: sudo apt-get update -q && sudo apt-get install -y -q redis-tools redis-server
+      - run: mvn -B -q package -DskipTests
+      - name: Start loomkv
+        run: |
+          java -jar target/loomkv.jar --port 6380 &
+          for i in $(seq 1 50); do redis-cli -p 6380 ping && break; sleep 0.2; done
+      - name: redis-cli compatibility
+        run: scripts/compat.sh 6380
+      - name: Benchmark against Redis on the same runner
+        run: |
+          redis-cli -p 6379 ping
+          {
+            echo "### redis-benchmark: loomkv vs Redis $(redis-server --version | grep -o 'v=[0-9.]*' | cut -d= -f2)"
+            echo "Same GitHub runner ($(nproc) vCPU), Java $(java -version 2>&1 | head -1 | cut -d'"' -f2)."
+            scripts/benchmark.sh 6380 6379
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t loomkv:ci .
+      - name: Smoke test
+        run: |
+          docker run -d --name loomkv -p 6380:6379 loomkv:ci
+          sudo apt-get install -y -q redis-tools >/dev/null
+          for i in $(seq 1 50); do redis-cli -p 6380 ping && break; sleep 0.2; done
+          redis-cli -p 6380 set from docker
+          test "$(redis-cli -p 6380 get from)" = docker
